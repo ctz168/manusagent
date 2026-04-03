@@ -34,19 +34,21 @@ graph TD
 - **`STARTUP_GUIDE.md`**: 详细描述了系统从开机到 Agent 就绪的完整初始化流程。
 
 ### 2. 编排与管理层 (`supervisor_conf/` & `scripts/`)
-- **`supervisor_conf/`**: 包含 10 多个服务配置文件，定义了服务的优先级和重启策略。
-- **`scripts/`**: 包含环境预检、动态密码生成（用于 Code-Server）和端口绑定的初始化脚本。
+- **`supervisor_conf/`**: 包含服务配置文件，定义了服务的优先级和重启策略。
+- **`scripts/`**: 包含环境预备脚本。注意：`check-start-code-server.sh` 依赖于 `sandbox-runtime` 的健康状态。
 
 ### 3. 智能交互层 (`skills_layer/` & `mcp_layer/`)
 - **`skills_layer/`**: 模块化的“思维模板”（Skills），为 LLM 提供特定领域的程序化知识。
 - **`mcp_layer/`**: MCP 服务启动脚本，是大模型执行 Shell 命令和文件操作的核心桥梁。
 
-### 4. 运行时 API 层 (`runtime_layer/`)
-- **`data_api.py`**: Python 编写的内部代理客户端，用于安全地调用外部搜索、模型等 API，而无需在沙箱内暴露原始密钥。
-
 ---
 
-## 🚀 部署与运行指南
+## 🚀 部署与运行指南（复现必读）
+
+### ⚠️ 重要说明：私有组件
+本仓库包含了 Manus 的**架构编排**、**启动脚本**和**配置逻辑**。但请注意：
+1.  **核心运行时 (`start_server`)**: 这是一个专有的二进制执行文件，负责管理沙箱状态。复现时，您需要将其替换为您自己的 Agent 运行时逻辑。
+2.  **MCP CLI (`manus-mcp-cli`)**: 同样是专有组件，负责协议解析。
 
 ### 第一步：构建容器镜像
 参考 `build_layer/Dockerfile.template` 构建基础镜像：
@@ -54,17 +56,13 @@ graph TD
 docker build -t manus-agent -f build_layer/Dockerfile.template .
 ```
 
-### 第二步：配置环境变量
-Agent 运行需要注入以下关键变量：
-- `RUNTIME_API_HOST`: 内部 API 网关地址（默认为 `https://api.manus.im`）。
-- `CODE_SERVER_PASSWORD`: 由脚本自动生成，也可手动指定。
-- `GH_TOKEN`: (可选) 用于 GitHub 集成。
+### 第二步：配置与启动
+1.  将 `supervisor_conf/*.conf` 放入容器的 `/etc/supervisor/conf.d/`。
+2.  将 `scripts/` 和 `mcp_layer/` 中的脚本放入 `/opt/.manus/.packages/scripts/` 并赋予执行权限。
+3.  **核心关键**：确保您的运行时服务监听在 `8330` 端口，并提供 `/healthz` 接口。因为 Code-Server 和 MCP 服务会通过该接口判断系统是否就绪。
 
-### 第三步：启动服务编排
-容器的入口点（Entrypoint）应设为 `supervisord`。它会按照以下优先级启动服务：
-1. **核心运行时 (Sandbox-Runtime)**: 必须首先启动并健康检查通过。
-2. **MCP 协议服务**: 开启后，大模型即可通过此通道下达指令。
-3. **工具与 IDE 层**: 启动无头浏览器和 Code-Server 供用户或 Agent 使用。
+### 第三步：运行
+容器启动后运行 `supervisord`，它会自动按顺序拉起所有组件。
 
 ---
 
@@ -75,11 +73,9 @@ Agent 运行需要注入以下关键变量：
 | **Code-Server** | `8329` | `~/.config/code-server/config.yaml` |
 | **MCP Server** | `8350` | `supervisor_conf/11-manus-mcp-server.conf` |
 | **Sandbox Runtime** | `8330` | `supervisor_conf/1-sandbox-runtime.conf` |
-| **VNC 桌面** | `5900` | `supervisor_conf/5-x11vnc.conf` |
 
 ---
 
 ## 🛡️ 安全与隔离
 - **权限限制**: 所有工具执行均以非 root 用户 `ubuntu` 运行。
-- **网络隔离**: 所有外部 API 调用均通过 `Runtime API` 层进行代理和审计。
-- **持久化**: 默认为临时文件系统，会话结束即重置。
+- **网络隔离**: 所有外部 API 调用均建议通过代理层进行审计。

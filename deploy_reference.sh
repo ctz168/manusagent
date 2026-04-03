@@ -4,50 +4,42 @@
 
 set -e
 
-echo "Starting ManusAgent environment setup..."
+# Base directory for deployment (Default is system root, can be overridden for testing)
+BASE_DIR=${1:-"/"}
+
+echo "Starting ManusAgent environment setup in ${BASE_DIR}..."
 
 # 1. Directory Setup
 echo "Creating directory structure..."
-sudo mkdir -p /opt/.manus/.packages/scripts
-sudo mkdir -p /etc/supervisor/conf.d
-sudo mkdir -p /home/ubuntu/skills
-sudo mkdir -p /home/ubuntu/.config/code-server
+mkdir -p "${BASE_DIR}/opt/.manus/.packages/scripts"
+mkdir -p "${BASE_DIR}/opt/.manus/.sandbox-runtime"
+mkdir -p "${BASE_DIR}/etc/supervisor/conf.d"
+mkdir -p "${BASE_DIR}/home/ubuntu/skills"
+mkdir -p "${BASE_DIR}/home/ubuntu/.config/code-server"
 
 # 2. Deploy Scripts
 echo "Deploying startup scripts..."
-sudo cp scripts/check-start-code-server.sh /opt/.manus/.packages/scripts/
-sudo cp mcp_layer/start-manus-mcp-server.sh /opt/.manus/.packages/scripts/
-sudo chmod +x /opt/.manus/.packages/scripts/*.sh
+cp scripts/check-start-code-server.sh "${BASE_DIR}/opt/.manus/.packages/scripts/"
+cp mcp_layer/start-manus-mcp-server.sh "${BASE_DIR}/opt/.manus/.packages/scripts/"
+chmod +x "${BASE_DIR}/opt/.manus/.packages/scripts/"*.sh
 
 # 3. Deploy Supervisor Configs
 echo "Deploying Supervisor configurations..."
-sudo cp supervisor_conf/*.conf /etc/supervisor/conf.d/
+cp supervisor_conf/*.conf "${BASE_DIR}/etc/supervisor/conf.d/"
 
 # 4. Deploy Skills
 echo "Deploying Agent Skills..."
-cp -r skills_layer/* /home/ubuntu/skills/
+cp -r skills_layer/* "${BASE_DIR}/home/ubuntu/skills/"
 
-# 5. Runtime API Setup
-echo "Deploying Runtime API client..."
-mkdir -p /opt/.manus/current
-cp runtime_layer/data_api.py /opt/.manus/current/
-
-# 6. Environment Variables
+# 5. Environment Variables
 echo "Initializing environment variables..."
-if [ ! -f /home/ubuntu/.env ]; then
-    cat <<EOF > /home/ubuntu/.env
+if [ ! -f "${BASE_DIR}/home/ubuntu/.env" ]; then
+    cat <<EOF > "${BASE_DIR}/home/ubuntu/.env"
 export APP_ENV=PROD
 export RUNTIME_API_HOST=https://api.manus.im
 export TZ=UTC
 EOF
 fi
-
-# 7. Start Services
-echo "Reloading Supervisor..."
-# In a real environment, you would run:
-# sudo supervisorctl reread
-# sudo supervisorctl update
-# sudo supervisorctl start all
 
 echo "-------------------------------------------------------"
 echo "ManusAgent environment deployment reference completed."
