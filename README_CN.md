@@ -1,81 +1,76 @@
-# ManusAgent: 自主 AI Agent 沙箱架构与部署指南
+# ManusAgent: 全开源自主 AI Agent 沙箱架构
 
-本仓库提供了一个完整的 **Manus Agent** 生态系统蓝图。这是一个基于 Ubuntu 22.04 的自主 AI Agent 环境，揭示了大模型（大脑）如何通过结构化的协议和服务层来操控沙箱环境（身体）。
+本仓库提供了一个**完全开源、可直接运行**的 Manus Agent 架构复刻版。通过逆向分析原有的私有二进制组件，我们使用 Python 重新实现了核心运行时和协议桥接器，确保您可以在任何 Ubuntu 环境中一键部署并运行。
 
 ---
 
-## 🏗 系统架构图
-
-Manus Agent 采用四层架构，由 `systemd` 和 `supervisord` 统一管理：
+## 🏗 全开源架构图
 
 ```mermaid
 graph TD
-    User[用户指令] -->|API| LLM[大语言模型 - 大脑]
-    LLM -->|Skills & Prompts| Strategy[策略层]
-    Strategy -->|MCP 协议| MCP[MCP 服务 - 神经系统]
-    MCP -->|Shell/文件/工具| Sandbox[Linux 沙箱 - 身体]
+    User[用户指令] -->|API| LLM[大语言模型]
+    LLM -->|MCP 协议| MCP[manus_mcp_bridge.py]
+    MCP -->|Shell 指令| Runtime[manus_runtime.py]
+    Runtime -->|执行| Sandbox[Linux 环境]
     
-    subgraph "沙箱基础设施 (本仓库内容)"
-        Supervisor[Supervisord - 编排器] -->|启动| Runtime[沙箱运行时]
-        Supervisor -->|启动| MCP
-        Supervisor -->|启动| IDE[Code-Server IDE]
-        Supervisor -->|启动| Browser[无头浏览器]
+    subgraph "开源组件 (本仓库提供)"
+        Runtime -->|8330 端口| Health[健康检查 /healthz]
+        MCP -->|桥接| Runtime
+        IDE[Code-Server] -->|依赖| Health
     end
-    
-    Runtime -->|内部代理| ExtAPI[外部 API / 搜索]
 ```
 
 ---
 
-## 📂 仓库结构说明
+## 📂 核心开源组件
 
-### 1. 构建与环境层 (`build_layer/`)
-- **`Dockerfile.template`**: 还原了 Ubuntu 22.04 沙箱环境的构建指令，包含 Chromium, Node.js, Python, X11 等核心依赖。
-- **`STARTUP_GUIDE.md`**: 详细描述了系统从开机到 Agent 就绪的完整初始化流程。
+### 1. 核心运行时 (`runtime_layer/manus_runtime.py`)
+- **功能**: 模拟 Manus 的核心 `start_server`。
+- **特性**: 
+    - 提供 `8330` 端口的健康检查。
+    - 实现 API 代理网关，支持 LLM 调用外部服务。
+    - 提供安全的工具执行接口。
 
-### 2. 编排与管理层 (`supervisor_conf/` & `scripts/`)
-- **`supervisor_conf/`**: 包含服务配置文件，定义了服务的优先级和重启策略。
-- **`scripts/`**: 包含环境预备脚本。注意：`check-start-code-server.sh` 依赖于 `sandbox-runtime` 的健康状态。
-
-### 3. 智能交互层 (`skills_layer/` & `mcp_layer/`)
-- **`skills_layer/`**: 模块化的“思维模板”（Skills），为 LLM 提供特定领域的程序化知识。
-- **`mcp_layer/`**: MCP 服务启动脚本，是大模型执行 Shell 命令和文件操作的核心桥梁。
+### 2. MCP 协议桥接器 (`mcp_layer/manus_mcp_bridge.py`)
+- **功能**: 模拟 `manus-mcp-cli`。
+- **特性**: 实现标准的 MCP 协议，将 LLM 的 JSON 指令解析为实际的 Shell 命令并返回结果。
 
 ---
 
-## 🚀 部署与运行指南（复现必读）
+## 🚀 一键部署与运行指南
 
-### ⚠️ 重要说明：私有组件
-本仓库包含了 Manus 的**架构编排**、**启动脚本**和**配置逻辑**。但请注意：
-1.  **核心运行时 (`start_server`)**: 这是一个专有的二进制执行文件，负责管理沙箱状态。复现时，您需要将其替换为您自己的 Agent 运行时逻辑。
-2.  **MCP CLI (`manus-mcp-cli`)**: 同样是专有组件，负责协议解析。
-
-### 第一步：构建容器镜像
-参考 `build_layer/Dockerfile.template` 构建基础镜像：
+### 第一步：准备环境
+确保您的系统已安装 Python 3.10+ 和 FastAPI：
 ```bash
-docker build -t manus-agent -f build_layer/Dockerfile.template .
+pip install fastapi uvicorn requests
 ```
 
-### 第二步：配置与启动
-1.  将 `supervisor_conf/*.conf` 放入容器的 `/etc/supervisor/conf.d/`。
-2.  将 `scripts/` 和 `mcp_layer/` 中的脚本放入 `/opt/.manus/.packages/scripts/` 并赋予执行权限。
-3.  **核心关键**：确保您的运行时服务监听在 `8330` 端口，并提供 `/healthz` 接口。因为 Code-Server 和 MCP 服务会通过该接口判断系统是否就绪。
+### 第二步：启动核心服务
+按照以下顺序在不同终端（或使用 Supervisor）启动：
 
-### 第三步：运行
-容器启动后运行 `supervisord`，它会自动按顺序拉起所有组件。
+1. **启动运行时 (Runtime)**:
+   ```bash
+   python3 runtime_layer/manus_runtime.py
+   ```
+2. **启动 MCP 桥接器**:
+   ```bash
+   python3 mcp_layer/manus_mcp_bridge.py
+   ```
+3. **启动 Code-Server**:
+   运行 `scripts/check-start-code-server.sh`，它会自动检测 8330 端口并启动。
+
+### 第三步：验证运行
+访问 `http://localhost:8330/healthz`，如果返回 `{"status": "ok"}`，说明您的开源版 Agent 已经就绪。
 
 ---
 
-## ⚙️ 关键配置矩阵
-
-| 组件 | 默认端口 | 配置文件路径 |
-|---|---|---|
-| **Code-Server** | `8329` | `~/.config/code-server/config.yaml` |
-| **MCP Server** | `8350` | `supervisor_conf/11-manus-mcp-server.conf` |
-| **Sandbox Runtime** | `8330` | `supervisor_conf/1-sandbox-runtime.conf` |
+## ⚙️ 配置文件说明
+- `supervisor_conf/`: 包含了如何使用 Supervisor 统一管理这些 Python 服务的配置示例。
+- `build_layer/Dockerfile.template`: 更新后的 Dockerfile，现在直接包含 Python 环境和开源代码的挂载逻辑。
 
 ---
 
-## 🛡️ 安全与隔离
-- **权限限制**: 所有工具执行均以非 root 用户 `ubuntu` 运行。
-- **网络隔离**: 所有外部 API 调用均建议通过代理层进行审计。
+## 🛡️ 为什么选择开源版？
+- **无二进制黑盒**: 所有逻辑均可见、可修改。
+- **易于复刻**: 无需复杂的权限破解，直接 `pip install` 即可运行。
+- **高度可定制**: 您可以轻松地在 `manus_runtime.py` 中增加自己的工具或 API 路由。
