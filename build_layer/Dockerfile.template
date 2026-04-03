@@ -1,0 +1,35 @@
+# Manus Agent Environment - Dockerfile Template (Inferred)
+FROM ubuntu:22.04
+
+# 1. Set Environment Variables
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    HOME=/home/ubuntu \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# 2. Install System Dependencies
+RUN apt-get update && apt-get install -y \
+    curl git supervisor sudo python3 python3-pip \
+    xvfb x11vnc chromium-browser \
+    net-tools psmisc unzip wget bc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. Setup User
+RUN useradd -m -s /bin/bash ubuntu && \
+    echo "ubuntu ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# 4. Install Runtimes (Python/Node.js)
+USER ubuntu
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
+    export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && \
+    nvm install 22.13.0 && npm install -g pnpm
+
+# 5. Copy Agent Logic (Internal)
+# In Manus, these are located in /opt/.manus/
+# COPY --chown=ubuntu:ubuntu ./manus-runtime /opt/.manus/
+
+# 6. Entrypoint Configuration
+USER root
+COPY ./supervisor_conf/*.conf /etc/supervisor/conf.d/
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
