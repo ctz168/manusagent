@@ -1,30 +1,38 @@
 # ManusAgent: 全源码自主 AI Agent 架构复刻与部署白皮书
 
-本仓库提供了一个**完全开源、全源码实现**的 Manus Agent 架构。通过逆向分析原有的私有二进制组件，我们使用 Python 重新实现了核心运行时和协议桥接器，彻底消除了“二进制黑盒”。本指南将带您从零开始，在标准的 Ubuntu 环境中复刻并运行这套自主 Agent 系统。
+本仓库提供了一个**完全开源、全源码实现**的 Manus Agent 架构。通过逆向分析原有的私有二进制组件，我们使用 Python 重新实现了核心运行时和协议桥接器，彻底消除了“二进制黑盒”。
 
 ---
 
-## 🏗 一、全景架构解析
+## 🏗 一、全景架构解析：为什么看不到 LLM 调用？
 
-Manus Agent 的核心逻辑在于“大脑（LLM）”与“身体（沙箱）”的解耦。其运行机制如下：
+您的观察非常敏锐：**在沙箱内部确实看不到直接调用 OpenAI/Claude API 的代码。** 这是因为 Manus 采用了典型的 **“云端大脑 (Cloud Brain) + 边缘身体 (Edge Body)”** 的分布式架构。
+
+### 1. 核心架构图 (逻辑流转)
 
 ```mermaid
 graph TD
-    User[用户指令] -->|API| LLM[大语言模型 - 决策大脑]
-    LLM -->|MCP 协议| MCP[manus_mcp_bridge.py - 神经中枢]
-    MCP -->|Shell 指令| Runtime[manus_runtime.py - 核心运行时]
-    Runtime -->|本地执行| Sandbox[Linux 环境 - 身体]
+    User[用户指令] -->|1. 发送请求| Cloud[Manus 云端后端 - 调度器]
+    Cloud -->|2. 调用 API| LLM[大语言模型 - 真正的决策大脑]
+    LLM -->|3. 生成指令| Cloud
+    Cloud -->|4. 下发 JSON 指令| Sandbox[Linux 沙箱 - 身体]
     
-    subgraph "全源码组件 (本仓库提供)"
-        Runtime -->|8330 端口| Health[健康检查 /healthz]
-        MCP -->|逻辑解析| Runtime
-        IDE[Code-Server] -->|启动依赖| Health
+    subgraph "沙箱内部 (本仓库内容)"
+        Sandbox -->|5. 接收指令| MCP[manus_mcp_bridge.py]
+        MCP -->|6. 执行 Shell| Runtime[manus_runtime.py]
+        Runtime -->|7. 返回结果| MCP
+        MCP -->|8. 上传执行结果| Sandbox
     end
+    
+    Sandbox -->|9. 结果回传| Cloud
+    Cloud -->|10. 结果喂给 LLM| LLM
+    LLM -->|11. 决定下一步行动| Cloud
 ```
 
-### 1. 核心组件功能
-- **`manus_runtime.py`**: 模拟 Manus 专有的 `start_server`。它是整个沙箱的“心脏”，负责提供健康检查、API 代理转发以及最终的 Shell 命令执行。
-- **`manus_mcp_bridge.py`**: 模拟 `manus-mcp-cli`。它实现了标准的 **Model Context Protocol (MCP)**，将 LLM 的 JSON 指令（如 `shell/run`）精准映射为本地命令。
+### 2. 为什么要这么设计？
+- **安全性**: 敏感的 API Key (如 OpenAI Key) 存储在云端后端，不会下发到用户可接触的沙箱环境中，防止泄露。
+- **持久性**: 即使沙箱因为网络波动断开，云端的 LLM 状态依然可以保持，待沙箱重连后继续任务。
+- **性能**: LLM 调用通常耗时较长，由云端异步处理可以更好地管理队列和并发。
 
 ---
 
@@ -42,7 +50,18 @@ graph TD
 
 ---
 
-## 🚀 三、保姆级部署指南
+## 🚀 三、模拟“外部大脑”运行示例
+
+为了让您直观地看到这个循环是如何转起来的，我编写了一个模拟脚本 `simulate_llm_brain.py`。它模拟了云端后端如何向沙箱发送指令：
+
+1. **大脑决策**: "我需要知道当前系统时间。"
+2. **下发指令**: 向 `manus_mcp_bridge.py` 发送 `{"method": "shell/run", "params": {"command": "date"}}`。
+3. **接收结果**: 拿到沙箱返回的时间。
+4. **下一步行动**: "时间已拿到，任务完成。"
+
+---
+
+## ⚙️ 四、保姆级部署指南
 
 ### 1. 环境准备 (Ubuntu 22.04+)
 首先，确保您的系统中安装了必要的 Python 依赖：
@@ -65,49 +84,12 @@ pip install fastapi uvicorn requests
    ```bash
    python3 runtime_layer/manus_runtime.py
    ```
-   *此时系统会监听 `0.0.0.0:8330`。*
 
-3. **启动协议桥接器 (Terminal 2)**:
+3. **启动协议桥接器并运行模拟大脑 (Terminal 2)**:
    ```bash
-   python3 mcp_layer/manus_mcp_bridge.py
+   # 启动桥接器并使用模拟脚本发送指令
+   python3 simulate_llm_brain.py
    ```
-
-4. **启动可视化 IDE (可选)**:
-   确保 8330 端口已就绪后，运行：
-   ```bash
-   bash scripts/check-start-code-server.sh
-   ```
-
----
-
-## ⚙️ 四、配置与运行细节
-
-### 1. 端口矩阵
-| 组件 | 端口 | 说明 |
-|---|---|---|
-| **Runtime** | `8330` | 核心 API 与健康检查 |
-| **Code-Server** | `8329` | 网页版 VS Code 界面 |
-| **MCP Bridge** | 管道/标准输入 | 与 LLM 交互的通讯协议 |
-
-### 2. 如何验证运行成功？
-- **方法 A**: 访问 `http://localhost:8330/healthz`，应返回 `{"status": "ok"}`。
-- **方法 B**: 在另一个终端执行测试指令：
-  ```bash
-  curl -X POST http://localhost:8330/execute -H "Content-Type: application/json" -d '{"command": "echo Hello Manus"}'
-  ```
-
----
-
-## 🛡️ 五、常见问题排查 (FAQ)
-
-**Q: 为什么 Code-Server 启动不了？**
-A: 请检查 `manus_runtime.py` 是否已在 8330 端口启动。启动脚本会轮询该端口，直到检测到 `/healthz` 返回成功。
-
-**Q: 我可以修改执行命令的权限吗？**
-A: 可以。在 `manus_runtime.py` 的 `execute_tool` 函数中，您可以增加任何权限控制逻辑（如限制某些高危命令）。
-
-**Q: 如何让系统在后台持续运行？**
-A: 推荐使用本仓库 `supervisor_conf/` 目录下的配置文件，通过 `supervisord` 进行生产级管理。
 
 ---
 
