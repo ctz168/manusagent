@@ -14,6 +14,7 @@ async def handle_request(line):
             command = params.get("command")
             print(f"[*] MCP Execution: {command}", file=sys.stderr)
             
+            # 这里的逻辑是直接在本地运行，也可以路由到 manus_runtime 的 /execute 接口
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
