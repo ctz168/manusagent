@@ -1,5 +1,6 @@
-# ManusAgent - Full System Architecture & Build Guide
+# ManusAgent: The Autonomous Agent Sandbox Architecture
 
+This repository provides a comprehensive blueprint of the **Manus Agent** ecosystem—an autonomous AI agent environment built on Ubuntu 22.04. It reveals how an LLM (the Brain) orchestrates a sandboxed Linux environment (the Body) through a structured hierarchy of protocols and services.
 This repository contains the core configuration, startup scripts, and logic layers for the Manus autonomous agent environment.
 
 ## Architecture Layers
