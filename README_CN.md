@@ -29,69 +29,62 @@ graph TD
     LLM -->|11. 决定下一步行动| Cloud
 ```
 
-### 2. 为什么要这么设计？
-- **安全性**: 敏感的 API Key (如 OpenAI Key) 存储在云端后端，不会下发到用户可接触的沙箱环境中，防止泄露。
-- **持久性**: 即使沙箱因为网络波动断开，云端的 LLM 状态依然可以保持，待沙箱重连后继续任务。
-- **性能**: LLM 调用通常耗时较长，由云端异步处理可以更好地管理队列和并发。
+---
+
+## 🚀 二、实战运行：接入真实大模型 (LLM)
+
+如果您希望复现一个**真正能自主思考并操作电脑**的 Agent，请按照以下步骤操作。我们已经为您编写了 `real_llm_brain.py` 脚本，它将作为“外部大脑”指挥沙箱执行任务。
+
+### 1. 准备 API Key
+支持 OpenAI、Claude 或任何兼容 OpenAI 格式的 API（如 DeepSeek、智谱 AI 等）。
+
+```bash
+# 设置环境变量 (推荐)
+export OPENAI_API_KEY="sk-xxxx"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+```
+
+### 2. 运行实战大脑
+确保 `manus_runtime.py` 已在 8330 端口启动，然后运行：
+```bash
+# 运行实战大脑并下达任务
+python3 real_llm_brain.py "帮我查看当前目录下的文件，并创建一个 test.txt"
+```
+
+### 3. 运行逻辑
+- **大脑决策**: `real_llm_brain.py` 调用大模型，产生一个 MCP 格式的 JSON 指令。
+- **身体执行**: 指令通过管道发送给 `manus_mcp_bridge.py`，再调用 `manus_runtime.py` 执行 shell。
+- **反馈闭环**: 执行结果返回给大模型，大模型决定下一步是继续执行还是结束任务。
 
 ---
 
-## 🛠 二、源码逻辑深度解析
+## 📂 三、核心开源组件说明
 
-### 1. 运行时逻辑 (`runtime_layer/manus_runtime.py`)
-- **健康检查 (`/healthz`)**: 返回系统版本和状态。这是 Code-Server 和其他监控组件判断 Agent 是否就绪的唯一标准。
-- **API 代理 (`/apiproxy.v1.ApiProxyService/CallApi`)**: 模拟与后端 API 网关的交互。在全源码版中，您可以根据 `apiId` 自定义任何外部服务的调用逻辑。
-- **工具执行 (`/execute`)**: 使用 `asyncio.create_subprocess_shell` 安全地异步执行命令，并实时捕获 `stdout` 和 `stderr`。
-
-### 2. 协议桥接逻辑 (`mcp_layer/manus_mcp_bridge.py`)
-- **标准输入流 (stdin)**: 持续监听来自 LLM 的指令流。
-- **方法映射**: 目前支持 `shell/run`（执行命令）和 `system/status`（获取状态）。
-- **JSON-RPC 响应**: 严格遵循 MCP 协议格式，确保大模型能够正确解析执行结果。
+- **`runtime_layer/manus_runtime.py`**: 核心运行时，提供健康检查、API 代理转发和 Shell 执行接口。
+- **`mcp_layer/manus_mcp_bridge.py`**: MCP 协议桥接器，实现 LLM 指令到 Shell 命令的精准映射。
+- **`real_llm_brain.py`**: 实战版外部大脑，负责思考、决策与指令下发（需 API Key）。
+- **`simulate_llm_brain.py`**: 模拟版外部大脑，用于本地测试协议连通性（无需 API Key）。
 
 ---
 
-## 🚀 三、模拟“外部大脑”运行示例
-
-为了让您直观地看到这个循环是如何转起来的，我编写了一个模拟脚本 `simulate_llm_brain.py`。它模拟了云端后端如何向沙箱发送指令：
-
-1. **大脑决策**: "我需要知道当前系统时间。"
-2. **下发指令**: 向 `manus_mcp_bridge.py` 发送 `{"method": "shell/run", "params": {"command": "date"}}`。
-3. **接收结果**: 拿到沙箱返回的时间。
-4. **下一步行动**: "时间已拿到，任务完成。"
-
----
-
-## ⚙️ 四、保姆级部署指南
+## 🛠 四、保姆级部署指南
 
 ### 1. 环境准备 (Ubuntu 22.04+)
-首先，确保您的系统中安装了必要的 Python 依赖：
 ```bash
-# 更新系统并安装基础工具
-sudo apt-get update && sudo apt-get install -y python3-pip net-tools curl
-
-# 安装 Web 服务框架
+sudo apt-get update && sudo apt-get install -y python3-pip curl
 pip install fastapi uvicorn requests
 ```
 
 ### 2. 部署步骤
-1. **克隆代码**:
-   ```bash
-   git clone https://github.com/ctz168/manusagent.git
-   cd manusagent
-   ```
-
-2. **启动核心运行时 (Terminal 1)**:
-   ```bash
-   python3 runtime_layer/manus_runtime.py
-   ```
-
-3. **启动协议桥接器并运行模拟大脑 (Terminal 2)**:
-   ```bash
-   # 启动桥接器并使用模拟脚本发送指令
-   python3 simulate_llm_brain.py
-   ```
+1. **克隆代码**: `git clone https://github.com/ctz168/manusagent.git`
+2. **启动运行时 (Terminal 1)**: `python3 runtime_layer/manus_runtime.py`
+3. **启动实战大脑 (Terminal 2)**: `python3 real_llm_brain.py "你的任务描述"`
 
 ---
 
-## 🤝 贡献与扩展
-本仓库是完全透明的开源实现。如果您发现了逻辑上的优化空间，或者希望增加更多的 MCP 方法支持，欢迎提交 Pull Request！
+## 🛡️ 为什么这个版本更适合您？
+- **全闭环复现**: 从大脑决策到身体执行，提供了完整的代码链路。
+- **零黑盒**: 每一行 Python 代码都清晰可见，方便二次开发。
+- **高度兼容**: 只要支持 OpenAI 格式的 API 即可一键接入。
+
+如果您有任何逻辑优化或功能扩展建议，欢迎提交 PR！
