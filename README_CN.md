@@ -1,90 +1,80 @@
-# ManusAgent: 全源码自主 AI Agent 架构复刻与部署白皮书
+# ManusAgent: 深度对齐 Manus 原生引擎的全源码复刻指南
 
-本仓库提供了一个**完全开源、全源码实现**的 Manus Agent 架构。通过逆向分析原有的私有二进制组件，我们使用 Python 重新实现了核心运行时和协议桥接器，彻底消除了“二进制黑盒”。
+本仓库是对 Manus 自主 AI Agent 容器内引擎的深度逆向与复刻成果。通过分析真实运行的 `sandbox-runtime` 和 `manus-mcp-server` 进程，我们提取了关键的系统编排脚本，并使用 Python 还原了原本闭源的二进制组件逻辑。
 
 ---
 
-## 🏗 一、全景架构解析：为什么看不到 LLM 调用？
+## 🏗 一、原生引擎全景架构 (1:1 对齐)
 
-您的观察非常敏锐：**在沙箱内部确实看不到直接调用 OpenAI/Claude API 的代码。** 这是因为 Manus 采用了典型的 **“云端大脑 (Cloud Brain) + 边缘身体 (Edge Body)”** 的分布式架构。
+Manus Agent 引擎运行在 Ubuntu 22.04 容器中，采用 **Supervisor** 进行多层级服务编排。
 
-### 1. 核心架构图 (逻辑流转)
-
-```mermaid
-graph TD
-    User[用户指令] -->|1. 发送请求| Cloud[Manus 云端后端 - 调度器]
-    Cloud -->|2. 调用 API| LLM[大语言模型 - 真正的决策大脑]
-    LLM -->|3. 生成指令| Cloud
-    Cloud -->|4. 下发 JSON 指令| Sandbox[Linux 沙箱 - 身体]
-    
-    subgraph "沙箱内部 (本仓库内容)"
-        Sandbox -->|5. 接收指令| MCP[manus_mcp_bridge.py]
-        MCP -->|6. 执行 Shell| Runtime[manus_runtime.py]
-        Runtime -->|7. 返回结果| MCP
-        MCP -->|8. 上传执行结果| Sandbox
-    end
-    
-    Sandbox -->|9. 结果回传| Cloud
-    Cloud -->|10. 结果喂给 LLM| LLM
-    LLM -->|11. 决定下一步行动| Cloud
+### 1. 核心进程树
+```text
+systemd(1)
+└── supervisord(699)
+    ├── sandbox-runtime (8330端口) -> 执行核心 (start_server)
+    ├── manus-mcp-server (stdin/stdout) -> 协议网关 (manus-mcp-cli)
+    ├── code-server (8329端口) -> 可视化 IDE
+    └── chrome/xvfb -> 浏览器执行环境
 ```
 
----
-
-## 🚀 二、实战运行：接入真实大模型 (LLM)
-
-如果您希望复现一个**真正能自主思考并操作电脑**的 Agent，请按照以下步骤操作。我们已经为您编写了 `real_llm_brain.py` 脚本，它将作为“外部大脑”指挥沙箱执行任务。
-
-### 1. 准备 API Key
-支持 OpenAI、Claude 或任何兼容 OpenAI 格式的 API（如 DeepSeek、智谱 AI 等）。
-
-```bash
-# 设置环境变量 (推荐)
-export OPENAI_API_KEY="sk-xxxx"
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-```
-
-### 2. 运行实战大脑
-确保 `manus_runtime.py` 已在 8330 端口启动，然后运行：
-```bash
-# 运行实战大脑并下达任务
-python3 real_llm_brain.py "帮我查看当前目录下的文件，并创建一个 test.txt"
-```
-
-### 3. 运行逻辑
-- **大脑决策**: `real_llm_brain.py` 调用大模型，产生一个 MCP 格式的 JSON 指令。
-- **身体执行**: 指令通过管道发送给 `manus_mcp_bridge.py`，再调用 `manus_runtime.py` 执行 shell。
-- **反馈闭环**: 执行结果返回给大模型，大模型决定下一步是继续执行还是结束任务。
+### 2. 指令流转逻辑
+1. **云端大脑 (LLM)** 下达 JSON 指令。
+2. **MCP 网关** (`manus_mcp_bridge_open.py`) 接收指令并解析。
+3. **运行时执行** (`manus_runtime_open.py`) 接收 MCP 请求，通过 `asyncio.create_subprocess_shell` 在 Linux 沙箱中执行。
+4. **结果回传**：执行结果（stdout/stderr）按原路回传给 LLM。
 
 ---
 
-## 📂 三、核心开源组件说明
+## 📂 二、核心组件与源码解析
 
-- **`runtime_layer/manus_runtime.py`**: 核心运行时，提供健康检查、API 代理转发和 Shell 执行接口。
-- **`mcp_layer/manus_mcp_bridge.py`**: MCP 协议桥接器，实现 LLM 指令到 Shell 命令的精准映射。
-- **`real_llm_brain.py`**: 实战版外部大脑，负责思考、决策与指令下发（需 API Key）。
-- **`simulate_llm_brain.py`**: 模拟版外部大脑，用于本地测试协议连通性（无需 API Key）。
+本仓库已将原生环境中的明文源码与复刻逻辑分类存放：
+
+### 1. 运行时层 (`runtime_layer/`)
+- **`data_api.py`**: **[原生源码]** 用于沙箱内请求外部 API 的代理客户端。
+- **`runtime_version.py`**: **[原生源码]** 记录当前引擎版本（v2.0.29）。
+- **`start_server.sh`**: **[原生源码]** 核心运行时的启动脚本，包含复杂的 Python 环境变量配置。
+- **`manus_runtime_open.py`**: **[开源重构]** 完美替代原生 `start_server` 二进制文件，提供 `/healthz` 和 `/execute` 接口。
+
+### 2. 协议层 (`mcp_layer/`)
+- **`start-manus-mcp-server.sh`**: **[原生源码]** 负责等待运行时就绪并拉起 MCP 服务。
+- **`manus_mcp_bridge_open.py`**: **[开源重构]** 替代原生 `manus-mcp-cli`，实现标准的 MCP 协议交互逻辑。
+
+### 3. 编排层 (`supervisor_conf/` & `scripts/`)
+- **`1-sandbox-runtime.conf`**: **[原生配置]** 定义了核心运行时的启动优先级、用户权限和日志路径。
+- **`11-manus-mcp-server.conf`**: **[原生配置]** 定义了协议网关的守护逻辑。
+- **`7-code-server.conf`**: **[原生配置]** 定义了可视化 IDE 的启动逻辑。
+- **`check-start-code-server.sh`**: **[原生脚本]** 包含动态生成密码和端口绑定的初始化逻辑。
 
 ---
 
-## 🛠 四、保姆级部署指南
+## 🚀 三、实战部署与运行
 
 ### 1. 环境准备 (Ubuntu 22.04+)
 ```bash
-sudo apt-get update && sudo apt-get install -y python3-pip curl
+# 安装核心依赖
+sudo apt-get update && sudo apt-get install -y python3-pip curl supervisor
 pip install fastapi uvicorn requests
 ```
 
-### 2. 部署步骤
-1. **克隆代码**: `git clone https://github.com/ctz168/manusagent.git`
-2. **启动运行时 (Terminal 1)**: `python3 runtime_layer/manus_runtime.py`
-3. **启动实战大脑 (Terminal 2)**: `python3 real_llm_brain.py "你的任务描述"`
+### 2. 一键启动流程
+1. **部署配置**: 将 `supervisor_conf/` 下的文件拷贝到 `/etc/supervisor/conf.d/`。
+2. **启动引擎**:
+   ```bash
+   # 启动全源码版运行时
+   python3 runtime_layer/manus_runtime_open.py &
+   
+   # 启动全源码版 MCP 桥接器
+   python3 mcp_layer/manus_mcp_bridge_open.py
+   ```
+3. **验证连通性**:
+   访问 `http://localhost:8330/healthz`，若返回 `{"status": "ok", "version": "2.0.29"}` 则表示引擎对齐成功。
 
 ---
 
-## 🛡️ 为什么这个版本更适合您？
-- **全闭环复现**: 从大脑决策到身体执行，提供了完整的代码链路。
-- **零黑盒**: 每一行 Python 代码都清晰可见，方便二次开发。
-- **高度兼容**: 只要支持 OpenAI 格式的 API 即可一键接入。
+## 🛠 四、开发者说明
+本仓库旨在通过全源码化的方式，让开发者能够深入理解 Manus Agent 的底层运行机制。
+- **二进制替代**: 我们使用 Python FastAPI 框架重写了 C++/Go 编写的二进制文件，在保证功能对齐的同时，提供了极高的可读性和二次开发能力。
+- **环境变量**: 原生引擎重度依赖环境变量（见 `README_CN.md` 中的架构图说明），部署时请务必参考 `scripts/` 下的加载逻辑。
 
-如果您有任何逻辑优化或功能扩展建议，欢迎提交 PR！
+如果您有任何复现上的问题，欢迎在 GitHub 提交 Issue！
